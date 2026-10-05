@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoVlog - Monitoramento Global de Vulcões</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS for Satellite Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+        /* Pulse animation for active alert volcanoes */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.4); opacity: 0.2; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+        .volcano-pulse {
+            animation: pulse-ring 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 h-full flex flex-col overflow-hidden">
+
+    <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between shrink-0 z-30">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-600 via-orange-600 to-red-600 flex items-center justify-center shadow-lg shadow-orange-900/40">
+                <i class="fa-solid fa-volcano text-white text-xl"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg tracking-wider bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">GEOVLOG</h1>
+                <p class="text-xs text-slate-400">Monitoramento Global de Atividade Vulcânica em Tempo Real</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-3">
+            <div class="hidden sm:flex items-center bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-300">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 mr-2 animate-pulse"></span>
+                <span>Dados de Satélite Ativos</span>
+            </div>
+            <button onclick="toggleAlertsModal()" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-2">
+                <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
+                <span class="hidden md:inline">Alertas Ativos</span>
+                <span id="alert-badge" class="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">0</span>
+            </button>
+            <button onclick="refreshData()" id="refresh-btn" class="bg-orange-600 hover:bg-orange-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-2 shadow-lg shadow-orange-900/20">
+                <i class="fa-solid fa-rotate"></i>
+                <span class="hidden md:inline">Atualizar</span>
+            </button>
+        </div>
+    </header>
+
+    <div class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        
+        <!-- Sidebar: Volcano List & Details -->
+        <aside class="w-full md:w-96 lg:w-[420px] bg-slate-900/95 border-r border-slate-800 flex flex-col shrink-0 z-20 h-1/2 md:h-full">
+            <!-- Search & Filters -->
+            <div class="p-4 border-b border-slate-800 space-y-3">
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                        <i class="fa-solid fa-magnifying-glass text-sm"></i>
+                    </span>
+                    <input type="text" id="search-input" oninput="filterVolcanoes()" placeholder="Buscar vulcão por nome ou país..." class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-orange-500 transition">
+                </div>
+                
+                <div class="flex items-center justify-between text-xs text-slate-400">
+                    <span>Filtro de Alerta:</span>
+                    <div class="flex space-x-1">
+                        <button onclick="filterByLevel('ALL')" class="filter-btn px-2.5 py-1 rounded-lg bg-orange-600 text-white font-medium transition" data-level="ALL">Todos</button>
+                        <button onclick="filterByLevel('RED')" class="filter-btn px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition" data-level="RED">Vermelho</button>
+                        <button onclick="filterByLevel('ORANGE')" class="filter-btn px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition" data-level="ORANGE">Laranja</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Volcano List Container -->
+            <div id="volcano-list" class="flex-1 overflow-y-auto p-3 space-y-2.5">
+                <!-- Dynamically populated -->
+                <div class="text-center py-12 text-slate-500">
+                    <i class="fa-solid fa-spinner fa-spin text-2xl mb-2"></i>
+                    <p class="text-sm">Carregando dados globais de vulcões...</p>
+                </div>
+            </div>
+
+            <!-- Selected Volcano Detail Drawer / Card (Mobile bottom / Sidebar footer) -->
+            <div id="volcano-detail-panel" class="hidden border-t border-slate-800 bg-slate-900/90 p-4 shrink-0 transition-all">
+                <div class="flex justify-between items-start mb-2">
+                    <div>
+                        <span id="detail-code" class="text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full bg-slate-800 text-slate-300"></span>
+                        <h3 id="detail-name" class="text-base font-bold text-slate-100 mt-1"></h3>
+                    </div>
+                    <button onclick="closeDetails()" class="text-slate-400 hover:text-white p-1">
+                        <i class="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                </div>
+                <p id="detail-location" class="text-xs text-slate-400 mb-3 flex items-center">
+                    <i class="fa-solid fa-location-dot text-orange-500 mr-1.5"></i> <span></span>
+                </p>
+                
+                <div class="grid grid-cols-2 gap-2 mb-3 text-xs">
+                    <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80">
+                        <span class="text-slate-500 block mb-0.5">Nível de Alerta</span>
+                        <span id="detail-alert" class="font-bold flex items-center"></span>
+                    </div>
+                    <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80">
+                        <span class="text-slate-500 block mb-0.5">Elevação</span>
+                        <span id="detail-elevation" class="font-bold text-slate-200"></span>
+                    </div>
+                </div>
+
+                <div class="bg-slate-950 p-3 rounded-lg border border-slate-800/80 mb-3 text-xs">
+                    <span class="text-slate-400 font-semibold block mb-1"><i class="fa-solid fa-satellite text-cyan-400 mr-1"></i> Status de Monitoramento via Satélite:</span>
+                    <p id="detail-activity" class="text-slate-300 leading-relaxed"></p>
+                </div>
+
+                <div class="flex space-x-2">
+                    <button id="fly-to-btn" class="flex-1 bg-orange-600 hover:bg-orange-500 text-white py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center space-x-1.5">
+                        <i class="fa-solid fa-crosshairs"></i>
+                        <span>Focar no Satélite</span>
+                    </button>
+                    <button onclick="openVlogModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center">
+                        <i class="fa-solid fa-video text-red-400"></i>
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Map Container -->
+        <main class="flex-1 h-1/2 md:h-full relative">
+            <div id="map"></div>
+
+            <!-- Map Floating Controls (Layer toggle simulation) -->
+            <div class="absolute top-4 right-4 z-20 bg-slate-900/90 backdrop-blur border border-slate-800 rounded-xl p-1.5 shadow-xl flex flex-col space-y-1">
+                <button onclick="setMapLayer('satellite')" id="layer-sat-btn" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-orange-600 text-white transition flex items-center space-x-1.5">
+                    <i class="fa-solid fa-earth-americas"></i>
+                    <span class="hidden sm:inline">Satélite</span>
+                </button>
+                <button onclick="setMapLayer('standard')" id="layer-std-btn" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition flex items-center space-x-1.5">
+                    <i class="fa-solid fa-map"></i>
+                    <span class="hidden sm:inline">Padrão</span>
+                </button>
+            </div>
+
+            <!-- Live Stats Overlay -->
+            <div class="absolute bottom-4 left-4 z-20 bg-slate-900/90 backdrop-blur border border-slate-800 px-4 py-2.5 rounded-xl shadow-xl hidden sm:flex items-center space-x-6 text-xs">
+                <div>
+                    <span class="text-slate-500 block">Vulcões Monitorados</span>
+                    <span id="stat-total" class="font-bold text-slate-100 text-sm">0</span>
+                </div>
+                <div class="w-px h-6 bg-slate-800"></div>
+                <div>
+                    <span class="text-slate-500 block">Alerta Vermelho</span>
+                    <span id="stat-red" class="font-bold text-red-500 text-sm">0</span>
+                </div>
+                <div class="w-px h-6 bg-slate-800"></div>
+                <div>
+                    <span class="text-slate-500 block">Alerta Laranja</span>
+                    <span id="stat-orange" class="font-bold text-amber-500 text-sm">0</span>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Alerts Modal -->
+    <div id="alerts-modal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/50">
+                <h3 class="font-bold text-slate-100 flex items-center space-x-2">
+                    <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
+                    <span>Relatório de Alertas Ativos (Erupções & Surtos)</span>
+                </h3>
+                <button onclick="toggleAlertsModal()" class="text-slate-400 hover:text-white p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div id="alerts-modal-content" class="p-4 overflow-y-auto space-y-3 flex-1">
+                <!-- Populated via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Simulated Live Vlog / Thermal Camera Modal -->
+    <div id="vlog-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+                <div>
+                    <span class="text-[10px] text-red-500 font-bold uppercase tracking-wider bg-red-950/50 px-2 py-0.5 rounded border border-red-900/50">GEOVLOG CAM AO VIVO</span>
+                    <h3 id="vlog-title" class="font-bold text-slate-100 text-base mt-1">Câmera Termográfica e Satelital</h3>
+                </div>
+                <button onclick="openVlogModal()" class="text-slate-400 hover:text-white p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div class="p-4 bg-black relative flex items-center justify-center aspect-video">
+                <!-- Simulated Thermal/Live view -->
+                <div class="absolute inset-0 opacity-40 bg-[radial-gradient(#ff3300_1px,transparent_1px)] [background-size:16px_16px]"></div>
+                <div class="text-center z-10 p-6">
+                    <div class="w-16 h-16 rounded-full bg-red-600/20 border-2 border-red-500 flex items-center justify-center mx-auto mb-3 animate-pulse">
+                        <i class="fa-solid fa-satellite-dish text-red-500 text-2xl"></i>
+                    </div>
+                    <p class="text-sm font-semibold text-slate-200" id="vlog-desc">Estabelecendo transmissão ao vivo via constelação de satélites...</p>
+                    <p class="text-xs text-slate-500 mt-1">Espectro Térmico de Infravermelho em Tempo Real</p>
+                </div>
+                <div class="absolute top-3 left-3 bg-red-600 text-white px-2 py-0.5 rounded text-[10px] font-bold flex items-center space-x-1.5 animate-pulse">
+                    <span class="w-2 h-2 rounded-full bg-white"></span>
+                    <span>LIVE SATÉLITE</span>
+                </div>
+            </div>
+            <div class="p-3 bg-slate-950 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
+                <span>Resolução: HD 1080p Thermal</span>
+                <button onclick="openVlogModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-medium transition">Fechar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script>
+        const volcanoes = [
+            {
+                id: 'etna',
+                name: 'Monte Etna',
+                country: 'Itália',
+                region: 'Sicília, Europa',
+                lat: 37.751,
+                lng: 15.0,
+                elevation: '3.357 m',
+                alertLevel: 'RED',
+                alertText: 'Erupção estromboliana contínua e emissão de cinzas registrada por satélite há 2 horas. Perigo moderado na cratera summit.',
+                lastActive: 'Hoje, 2026'
+            },
+            {
+                id: 'kilauea',
+                name: 'Kilauea',
+                country: 'Estados Unidos',
+                region: 'Havaí, EUA',
+                lat: 19.425,
+                lng: -155.292,
+                elevation: '1.222 m',
+                alertLevel: 'ORANGE',
+                alertText: 'Atividade de lava confinada na cratera Halemaʻumaʻu. Emissões de dióxido de enxofre elevadas.',
+                lastActive: 'Ativo Recentemente'
+            },
+            {
+                id: 'fuji',
+                name: 'Monte Fuji',
+                country: 'Japão',
+                region: 'Honshu, Japão',
+                lat: 35.3606,
+                lng: 138.7274,
+                elevation: '3.776 m',
+                alertLevel: 'GREEN',
+                alertText: 'Monitoramento contínuo sem anomalias térmicas significativas detectadas por satélite nos últimos 30 dias.',
+                lastActive: '1707 (Dormiente)'
+            },
+            {
+                id: 'merapi',
+                name: 'Monte Merapi',
+                country: 'Indonésia',
+                region: 'Java, Indonésia',
+                lat: -7.5407,
+                lng: 110.4457,
+                elevation: '2.968 m',
+                alertLevel: 'RED',
+                alertText: 'Fluxos piroclásticos frequentes e avalanches de lava observadas nas encostas sudoeste.',
+                lastActive: 'Ativo Contínuo'
+            },
+            {
+                id: 'popocatepetl',
+                name: 'Popocatépetl',
+                country: 'México',
+                region: 'Puebla/México',
+                lat: 19.023,
+                lng: -98.622,
+                elevation: '5.426 m',
+                alertLevel: 'ORANGE',
+                alertText: 'Exalações moderadas de vapor de água, gás e pequenas quantidades de cinzas. Raio de exclusão de 12km.',
+                lastActive: 'Ativo Hoje'
+            },
+            {
+                id: 'villarrica',
+                name: 'Villarrica',
+                country: 'Chile',
+                region: 'Andes do Sul, Chile',
+                lat: -39.42,
+                lng: -71.93,
+                elevation: '2.847 m',
+                alertLevel: 'ORANGE',
+                alertText: 'Brilho noturno na cratera indicando lago de lava ativo próximo à superfície. Alerta técnico mantido.',
+                lastActive: 'Ativo Recente'
+            },
+            {
+                id: 'sakurajima',
+                name: 'Sakurajima',
+                country: 'Japão',
+                region: 'Kyushu, Japão',
+                lat: 31.585,
+                lng: 130.657,
+                elevation: '1.117 m',
+                alertLevel: 'ORANGE',
+                alertText: 'Pequenas explosões vulcânicas esporádicas com projeção de bombas vulcânicas até 2km.',
+                lastActive: 'Ativo'
+            },
+            {
+                id: 'stromboli',
+                name: 'Stromboli',
+                country: 'Itália',
+                region: 'Ilhas Eólias, Itália',
+                lat: 38.789,
+                lng: 15.213,
+                elevation: '924 m',
+                alertLevel: 'ORANGE',
+                alertText: 'Atividade explosiva normal nas crateras ativas com transbordamento ocasional de lava.',
+                lastActive: 'Ativo Diário'
+            }
+        ];
+
+        let map;
+        let markers = {};
+        let currentFilter = 'ALL';
+        let selectedVolcanoId = null;
+        let satelliteLayer, standardLayer;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            // Initialize Leaflet Map centered on world view
+            map = L.map('map', {
+                center: [20, 0],
+                zoom: 3,
+                zoomControl: false
+            });
+
+            // Add custom zoom control to top-left
+            L.control.zoom({ position: 'topleft' }).addTo(map);
+
+            // Free Satellite Layer (Esri World Imagery)
+            satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+                maxZoom: 18
+            });
+
+            // Standard OpenStreetMap Layer as alternative
+            standardLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors',
+                maxZoom: 19
+            });
+
+            // Set satellite as default
+            satelliteLayer.addTo(map);
+
+            renderVolcanoList(volcanoes);
+            renderMarkers(volcanoes);
+            updateStats();
+        });
+
+        function renderMarkers(data) {
+            // Clear existing markers
+            Object.values(markers).forEach(marker => map.removeLayer(marker));
+            markers = {};
+
+            data.forEach(v => {
+                let colorClass = 'bg-emerald-500';
+                let pulseColor = 'rgba(16, 185, 129, 0.4)';
+                if (v.alertLevel === 'RED') {
+                    colorClass = 'bg-red-600';
+                    pulseColor = 'rgba(220, 38, 38, 0.6)';
+                } else if (v.alertLevel === 'ORANGE') {
+                    colorClass = 'bg-amber-500';
+                    pulseColor = 'rgba(245, 158, 11, 0.6)';
+                }
+
+                const customHtml = `
+                    <div class="relative flex items-center justify-center w-8 h-8">
+                        <div class="absolute w-8 h-8 rounded-full volcano-pulse" style="background-color: ${pulseColor};"></div>
+                        <div class="relative w-6 h-6 rounded-full ${colorClass} border-2 border-white shadow-lg flex items-center justify-center text-white text-[10px] font-bold">
+                            <i class="fa-solid fa-volcano text-[10px]"></i>
+                        </div>
+                    </div>
+                `;
+
+                const customIcon = L.divIcon({
+                    className: 'custom-volcano-marker',
+                    html: customHtml,
+                    iconSize: [32, 32],
+                    iconAnchor: [16, 16]
+                });
+
+                const marker = L.marker([v.lat, v.lng], { icon: customIcon }).addTo(map);
+
+                marker.bindPopup(`
+                    <div class="p-1 text-slate-900 font-sans">
+                        <span class="text-[10px] uppercase font-bold text-slate-500">${v.country}</span>
+                        <h4 class="font-bold text-sm mb-1">${v.name}</h4>
+                        <p class="text-xs text-slate-600 mb-2">${v.alertText}</p>
+                        <button onclick="selectVolcano('${v.id}')" class="bg-orange-600 text-white text-xs px-2.5 py-1 rounded font-medium hover:bg-orange-500 transition">Ver Detalhes</button>
+                    </div>
+                `);
+
+                marker.on('click', () => {
+                    selectVolcano(v.id);
+                });
+
+                markers[v.id] = marker;
+            });
+        }
+
+        function renderVolcanoList(data) {
+            const listEl = document.getElementById('volcano-list');
+            if (data.length === 0) {
+                listEl.innerHTML = `
+                    <div class="text-center py-12 text-slate-500">
+                        <i class="fa-solid fa-mountain-sun text-3xl mb-2 opacity-50"></i>
+                        <p class="text-sm">Nenhum vulcão encontrado.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            data.forEach(v => {
+                let badgeBg = 'bg-emerald-950 text-emerald-400 border-emerald-900';
+                let dotBg = 'bg-emerald-500';
+                if (v.alertLevel === 'RED') {
+                    badgeBg = 'bg-red-950 text-red-400 border-red-900';
+                    dotBg = 'bg-red-500';
+                } else if (v.alertLevel === 'ORANGE') {
+                    badgeBg = 'bg-amber-950 text-amber-400 border-amber-900';
+                    dotBg = 'bg-amber-500';
+                }
+
+                const isSelected = selectedVolcanoId === v.id ? 'border-orange-500 bg-slate-800/80' : 'border-slate-800/80 bg-slate-900 hover:bg-slate-800/50';
+
+                html += `
+                    <div onclick="selectVolcano('${v.id}')" class="p-3 rounded-xl border ${isSelected} cursor-pointer transition flex items-start space-x-3 group">
+                        <div class="w-9 h-9 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center shrink-0 mt-0.5 text-orange-500 group-hover:scale-105 transition">
+                            <i class="fa-solid fa-volcano"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center justify-between mb-1">
+                                <h4 class="font-semibold text-sm text-slate-200 truncate">${v.name}</h4>
+                                <span class="text-[10px] px-2 py-0.5 rounded-full border ${badgeBg} font-medium flex items-center space-x-1 shrink-0">
+                                    <span class="w-1.5 h-1.5 rounded-full ${dotBg}"></span>
+                                    <span>${v.alertLevel}</span>
+                                </span>
+                            </div>
+                            <p class="text-xs text-slate-400 truncate"><i class="fa-solid fa-location-dot text-slate-500 mr-1"></i>${v.region}</p>
+                        </div>
+                    </div>
+                `;
+            });
+            listEl.innerHTML = html;
+        }
+
+        function selectVolcano(id) {
+            const v = volcanoes.find(item => item.id === id);
+            if (!v) return;
+
+            selectedVolcanoId = id;
+            renderVolcanoList(getFilteredVolcanoes());
+
+            // Populate detail drawer
+            document.getElementById('detail-code').innerText = v.country.toUpperCase();
+            document.getElementById('detail-name').innerText = v.name;
+            document.getElementById('detail-location').querySelector('span').innerText = v.region;
+            
+            const alertEl = document.getElementById('detail-alert');
+            alertEl.innerHTML = `<span class="w-2 h-2 rounded-full mr-1.5 ${v.alertLevel === 'RED' ? 'bg-red-500' : v.alertLevel === 'ORANGE' ? 'bg-amber-500' : 'bg-emerald-500'}"></span> Alerta ${v.alertLevel}`;
+            
+            document.getElementById('detail-elevation').innerText = v.elevation;
+            document.getElementById('detail-activity').innerText = v.alertText;
+
+            const detailPanel = document.getElementById('volcano-detail-panel');
+            detailPanel.classList.remove('hidden');
+
+            document.getElementById('fly-to-btn').onclick = () => {
+                map.flyTo([v.lat, v.lng], 10, { duration: 1.5 });
+                if (markers[id]) {
+                    markers[id].openPopup();
+                }
+            };
+
+            // Pan map smoothly
+            map.flyTo([v.lat, v.lng], 8, { duration: 1.2 });
+        }
+
+        function closeDetails() {
+            selectedVolcanoId = null;
+            document.getElementById('volcano-detail-panel').classList.add('hidden');
+            renderVolcanoList(getFilteredVolcanoes());
+        }
+
+        function getFilteredVolcanoes() {
+            const searchVal = document.getElementById('search-input').value.toLowerCase();
+            return volcanoes.filter(v => {
+                const matchesSearch = v.name.toLowerCase().includes(searchVal) || v.country.toLowerCase().includes(searchVal) || v.region.toLowerCase().includes(searchVal);
+                const matchesLevel = currentFilter === 'ALL' || v.alertLevel === currentFilter;
+                return matchesSearch && matchesLevel;
+            });
+        }
+
+        function filterVolcanoes() {
+            renderVolcanoList(getFilteredVolcanoes());
+        }
+
+        function filterByLevel(level) {
+            currentFilter = level;
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                if (btn.getAttribute('data-level') === level) {
+                    btn.className = 'filter-btn px-2.5 py-1 rounded-lg bg-orange-600 text-white font-medium transition';
+                } else {
+                    btn.className = 'filter-btn px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition';
+                }
+            });
+            renderVolcanoList(getFilteredVolcanoes());
+        }
+
+        function setMapLayer(type) {
+            if (type === 'satellite') {
+                map.removeLayer(standardLayer);
+                satelliteLayer.addTo(map);
+                document.getElementById('layer-sat-btn').className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-orange-600 text-white transition flex items-center space-x-1.5';
+                document.getElementById('layer-std-btn').className = 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition flex items-center space-x-1.5';
+            } else {
+                map.removeLayer(satelliteLayer);
+                standardLayer.addTo(map);
+                document.getElementById('layer-std-btn').className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-orange-600 text-white transition flex items-center space-x-1.5';
+                document.getElementById('layer-sat-btn').className = 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition flex items-center space-x-1.5';
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('stat-total').innerText = volcanoes.length;
+            const redCount = volcanoes.filter(v => v.alertLevel === 'RED').length;
+            const orangeCount = volcanoes.filter(v => v.alertLevel === 'ORANGE').length;
+            document.getElementById('stat-red').innerText = redCount;
+            document.getElementById('stat-orange').innerText = orangeCount;
+            document.getElementById('alert-badge').innerText = redCount + orangeCount;
+        }
+
+        function toggleAlertsModal() {
+            const modal = document.getElementById('alerts-modal');
+            modal.classList.toggle('hidden');
+            if (!modal.classList.contains('hidden')) {
+                const activeVolcanoes = volcanoes.filter(v => v.alertLevel === 'RED' || v.alertLevel === 'ORANGE');
+                let html = '';
+                activeVolcanoes.forEach(v => {
+                    html += `
+                        <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-start space-x-3">
+                            <div class="w-8 h-8 rounded-lg ${v.alertLevel === 'RED' ? 'bg-red-950 text-red-500 border border-red-900' : 'bg-amber-950 text-amber-500 border border-amber-900'} flex items-center justify-center shrink-0 mt-0.5">
+                                <i class="fa-solid fa-triangle-exclamation"></i>
+                            </div>
+                            <div class="flex-1">
+                                <div class="flex items-center justify-between mb-1">
+                                    <h4 class="font-bold text-sm text-slate-200">${v.name} (${v.country})</h4>
+                                    <span class="text-xs font-semibold ${v.alertLevel === 'RED' ? 'text-red-500' : 'text-amber-500'}">Nível ${v.alertLevel}</span>
+                                </div>
+                                <p class="text-xs text-slate-400 mb-2">${v.alertText}</p>
+                                <button onclick="toggleAlertsModal(); selectVolcano('${v.id}')" class="text-xs text-orange-400 hover:text-orange-300 font-medium flex items-center space-x-1">
+                                    <span>Ver no Mapa Satélite</span>
+                                    <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                document.getElementById('alerts-modal-content').innerHTML = html;
+            }
+        }
+
+        function openVlogModal(volcanoName = 'Monte Atna') {
+            const modal = document.getElementById('vlog-modal');
+            modal.classList.toggle('hidden');
+            if (!modal.classList.contains('hidden')) {
+                const vName = selectedVolcanoId ? volcanoes.find(v => v.id === selectedVolcanoId)?.name : volcanoName;
+                document.getElementById('vlog-title').innerText = `Transmissão Satelital: ${vName}`;
+                document.getElementById('vlog-desc').innerText = `Capturando anomalias térmicas infravermelhas e plumas de gás em tempo real para ${vName}.`;
+            }
+        }
+
+        function refreshData() {
+            const btn = document.getElementById('refresh-btn');
+            const icon = btn.querySelector('i');
+            icon.classList.add('fa-spin');
+            setTimeout(() => {
+                icon.classList.remove('fa-spin');
+                renderVolcanoList(getFilteredVolcanoes());
+                renderMarkers(getFilteredVolcanoes());
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
